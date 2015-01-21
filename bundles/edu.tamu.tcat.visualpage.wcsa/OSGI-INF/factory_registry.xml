@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scr:component xmlns:scr="http://www.osgi.org/xmlns/scr/v1.1.0" activate="activate" name="edu.tamu.tcat.visualpage.wcsa">
+   <implementation class="edu.tamu.tcat.analytics.datatrax.basic.factorymeta.ExtPointTranformerFactoryRegistry"/>
+   <service>
+      <provide interface="edu.tamu.tcat.analytics.datatrax.TransformerRegistry"/>
+   </service>
+</scr:component>

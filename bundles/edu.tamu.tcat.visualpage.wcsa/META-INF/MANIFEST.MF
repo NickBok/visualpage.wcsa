@@ -1,0 +1,18 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: WCSA Prototype Tools
+Bundle-SymbolicName: edu.tamu.tcat.visualpage.wcsa;singleton:=true
+Bundle-Version: 1.0.0.qualifier
+Bundle-RequiredExecutionEnvironment: JavaSE-1.8
+Import-Package: edu.tamu.tcat.analytics.datatrax,
+ edu.tamu.tcat.analytics.datatrax.basic,
+ edu.tamu.tcat.analytics.datatrax.basic.factorymeta,
+ edu.tamu.tcat.analytics.datatrax.config,
+ edu.tamu.tcat.osgi.config;version="1.0.3",
+ edu.tamu.tcat.osgi.services.util,
+ org.eclipse.equinox.app;version="1.1.0",
+ org.osgi.framework;version="1.8.0"
+Service-Component: OSGI-INF/factory_registry.xml,OSGI-INF/datatrax.xml,
+ OSGI-INF/props.xml
+Bundle-ClassPath: lib/jai_imageio.jar,
+ .

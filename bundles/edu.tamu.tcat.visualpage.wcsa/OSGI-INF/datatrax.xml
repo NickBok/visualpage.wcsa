@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scr:component xmlns:scr="http://www.osgi.org/xmlns/scr/v1.1.0" activate="activate" deactivate="deactivate" name="edu.tamu.tcat.visualpage.wcsa.datatrax">
+   <implementation class="edu.tamu.tcat.analytics.datatrax.basic.DataTraxFacadeImpl"/>
+   <service>
+      <provide interface="edu.tamu.tcat.analytics.datatrax.DataTraxFacade"/>
+   </service>
+   <reference bind="setTransformerRegistry" cardinality="1..1" interface="edu.tamu.tcat.analytics.datatrax.TransformerRegistry" name="TransformerRegistry" policy="static"/>
+   <reference bind="setConfiguration" cardinality="1..1" interface="edu.tamu.tcat.osgi.config.ConfigurationProperties" name="ConfigurationProperties" policy="static"/>
+</scr:component>
