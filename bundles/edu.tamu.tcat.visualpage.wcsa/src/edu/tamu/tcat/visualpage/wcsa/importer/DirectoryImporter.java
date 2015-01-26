@@ -12,57 +12,60 @@ import java.util.stream.Stream;
 
 import javax.imageio.ImageIO;
 
-public class DirectoryImporter
+public class DirectoryImporter implements Iterator<ImageProxy>
 {
-
-   private Path path;
-   private Set<Path> imageFiles;
    private Iterator<Path> imIterator;
-   private HashSet<String> suffixes;
+   private Path outputPath;
 
-   public DirectoryImporter(Path path)
+   public DirectoryImporter(Path inputPath, Path outputPath)
    {
-      this.path = path;
-   }
-   
-   public void initialize()
-   {
-      suffixes = new HashSet<>();
-      suffixes.addAll(Arrays.asList(ImageIO.getReaderFileSuffixes()));
+      this.outputPath = outputPath;
       
-      try (Stream<Path> files = Files.walk(path))
-      {
-         imageFiles = files.filter(this::isImageFile)
-                           .collect(Collectors.toSet());
-         imIterator = imageFiles.iterator();
-      }
-      catch (IOException e)
-      {
-         throw new IllegalStateException("Failed to read image files.", e);
-      }
+      Set<Path> imageFiles = ImageFileFilter.load(inputPath);
+      imIterator = imageFiles.iterator();
    }
    
+   @Override
    public boolean hasNext() 
    {
       return imIterator.hasNext();
    }
    
-   public String next() throws IOException
+   @Override
+   public ImageProxy next() 
    {
-      Path next = imIterator.next();
-      return next.toString();
-//      return ImageIO.read(next.toFile());
+      return new ImageProxy(this, imIterator.next());
    }
    
-   private boolean isImageFile(Path p)
+   private static class ImageFileFilter
    {
-      if (!Files.isReadable(p))
-         return false;
+      private final static HashSet<String> suffixes = new HashSet<>();
+      static {
+         suffixes.addAll(Arrays.asList(ImageIO.getReaderFileSuffixes()));
+      }
       
-      String fName = p.getFileName().toString();
-      int ix = fName.lastIndexOf(".");
-      
-      String suffix = (ix > 0) ? fName.substring(ix + 1) : "";
-      return !suffix.isEmpty() && suffixes.contains(suffix);
+      private static Set<Path> load(Path rootDir)
+      {
+         try (Stream<Path> files = Files.walk(rootDir))
+         {
+            return files.filter(ImageFileFilter::isImageFile)
+                              .collect(Collectors.toSet());
+         }
+         catch (IOException e)
+         {
+            throw new IllegalStateException("Failed to read image files.", e);
+         }
+      }
+      private static boolean isImageFile(Path p)
+      {
+         if (!Files.isReadable(p))
+            return false;
+         
+         String fName = p.getFileName().toString();
+         int ix = fName.lastIndexOf(".");
+         
+         String suffix = (ix > 0) ? fName.substring(ix + 1) : "";
+         return !suffix.isEmpty() && suffixes.contains(suffix);
+      }
    }
 }
