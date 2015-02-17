@@ -8,11 +8,24 @@ Import-Package: edu.tamu.tcat.analytics.datatrax,
  edu.tamu.tcat.analytics.datatrax.basic,
  edu.tamu.tcat.analytics.datatrax.basic.factorymeta,
  edu.tamu.tcat.analytics.datatrax.config,
+ edu.tamu.tcat.analytics.image.integral.datatrax,
+ edu.tamu.tcat.dia.adapters.opencv,
+ edu.tamu.tcat.dia.binarization,
+ edu.tamu.tcat.dia.binarization.sauvola,
+ edu.tamu.tcat.dia.morphological.opencv,
+ edu.tamu.tcat.dia.morphological.opencv.transformer,
+ edu.tamu.tcat.dia.morphological.opencv.util,
+ edu.tamu.tcat.dia.segmentation.cc.twopass,
+ edu.tamu.tcat.dia.segmentation.images.bloomberg.datatrax,
  edu.tamu.tcat.osgi.config;version="1.0.3",
- edu.tamu.tcat.osgi.services.util,
+ edu.tamu.tcat.osgi.config.file;version="1.0.3",
+ edu.tamu.tcat.osgi.services.util;version="1.3.0",
  org.eclipse.equinox.app;version="1.1.0",
  org.osgi.framework;version="1.8.0"
 Service-Component: OSGI-INF/factory_registry.xml,OSGI-INF/datatrax.xml,
  OSGI-INF/props.xml
 Bundle-ClassPath: lib/jai_imageio.jar,
  .
+Bundle-ActivationPolicy: lazy
+Bundle-Activator: edu.tamu.tcat.visualpage.wcsa.internal.Activator
+Bundle-Vendor: Texas A&M Engineering Experiment Station
