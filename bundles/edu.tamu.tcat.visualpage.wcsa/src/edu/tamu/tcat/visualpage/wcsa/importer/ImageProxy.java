@@ -2,6 +2,7 @@ package edu.tamu.tcat.visualpage.wcsa.importer;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import javax.imageio.ImageIO;
@@ -28,5 +29,20 @@ public class ImageProxy
       {
          throw new IllegalStateException("Failed to load image [" + inputFile + "]", e);
       }
+   }
+
+   public String getFilename()
+   {
+      return inputFile.getFileName().toString();
+   }
+   
+   public void write(String name, BufferedImage image) throws IOException
+   {
+      Path dir = importer.getOutputPath(this);
+      if (!Files.exists(dir))
+         Files.createDirectories(dir);
+      
+      Path outfile = dir.resolve(name + ".png");
+      ImageIO.write(image, "png", outfile.toFile());
    }
 }

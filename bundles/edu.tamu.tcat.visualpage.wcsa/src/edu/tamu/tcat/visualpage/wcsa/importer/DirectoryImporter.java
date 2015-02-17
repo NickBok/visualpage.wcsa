@@ -37,6 +37,16 @@ public class DirectoryImporter implements Iterator<ImageProxy>
       return new ImageProxy(this, imIterator.next());
    }
    
+   public Path getOutputPath(ImageProxy proxy)
+   {
+      String filename = proxy.getFilename();
+      if (filename.lastIndexOf('.') > 0)
+         filename = filename.substring(0, filename.lastIndexOf('.') + 1);
+      
+      Path imageOutputPath = outputPath.resolve(filename);
+      return imageOutputPath;
+   }
+   
    private static class ImageFileFilter
    {
       private final static HashSet<String> suffixes = new HashSet<>();
