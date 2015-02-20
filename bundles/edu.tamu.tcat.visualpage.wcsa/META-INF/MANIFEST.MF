@@ -4,7 +4,8 @@ Bundle-Name: WCSA Prototype Tools
 Bundle-SymbolicName: edu.tamu.tcat.visualpage.wcsa;singleton:=true
 Bundle-Version: 1.0.0.qualifier
 Bundle-RequiredExecutionEnvironment: JavaSE-1.8
-Import-Package: edu.tamu.tcat.analytics.datatrax,
+Import-Package: com.google.common.base,
+ edu.tamu.tcat.analytics.datatrax,
  edu.tamu.tcat.analytics.datatrax.basic,
  edu.tamu.tcat.analytics.datatrax.basic.factorymeta,
  edu.tamu.tcat.analytics.datatrax.config,
@@ -12,6 +13,7 @@ Import-Package: edu.tamu.tcat.analytics.datatrax,
  edu.tamu.tcat.dia.adapters.opencv,
  edu.tamu.tcat.dia.binarization,
  edu.tamu.tcat.dia.binarization.sauvola,
+ edu.tamu.tcat.dia.classifier.music.runlength,
  edu.tamu.tcat.dia.morphological.opencv,
  edu.tamu.tcat.dia.morphological.opencv.transformer,
  edu.tamu.tcat.dia.morphological.opencv.util,

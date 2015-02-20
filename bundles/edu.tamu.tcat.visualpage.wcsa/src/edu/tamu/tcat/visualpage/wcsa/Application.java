@@ -5,10 +5,15 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import org.eclipse.equinox.app.IApplication;
 import org.eclipse.equinox.app.IApplicationContext;
+
+import com.google.common.base.Joiner;
 
 import edu.tamu.tcat.analytics.datatrax.DataTraxFacade;
 import edu.tamu.tcat.analytics.datatrax.DataValueKey;
@@ -29,6 +34,8 @@ import edu.tamu.tcat.dia.adapters.opencv.BinaryToOpenCvMatrix;
 import edu.tamu.tcat.dia.adapters.opencv.OpenCvMatrixToBinary;
 import edu.tamu.tcat.dia.binarization.BinaryImage;
 import edu.tamu.tcat.dia.binarization.sauvola.FastSauvolaTransformer;
+import edu.tamu.tcat.dia.classifier.music.runlength.EM.Cluster;
+import edu.tamu.tcat.dia.classifier.music.runlength.RunLengthRatioTransformer;
 import edu.tamu.tcat.dia.morphological.opencv.transformer.OpenCvClosingTransformer;
 import edu.tamu.tcat.dia.morphological.opencv.transformer.OpenCvErosionTransformer;
 import edu.tamu.tcat.dia.morphological.opencv.transformer.OpenCvOpeningTransformer;
@@ -67,7 +74,7 @@ public class Application implements IApplication
 //         // TODO process results
 //         // TODO write outputs
 
-         workflow.join();
+         workflow.join(2, TimeUnit.HOURS);
          long end = System.currentTimeMillis();
          System.out.println("end: " + ((end - start) / (double)1000));
          return IApplication.EXIT_OK;
@@ -81,8 +88,8 @@ public class Application implements IApplication
    
    String outputDir = "I:\\Projects\\HathiTrust WCSA\\output";
    String baseDir = "I:\\Projects\\HathiTrust WCSA\\WCSA initial small dataset";
-//   String itemDir = "ark+=13960=t00z72x8w";
-   String itemDir = "39015049753844";
+   String itemDir = "ark+=13960=t00z72x8w";
+//   String itemDir = "39015049753844";
    
    private DirectoryImporter getImporter()
    {
@@ -130,12 +137,27 @@ public class Application implements IApplication
                   image = (BinaryImage)value;
 //                     proxy.write("initial_reduction", BinaryImage.toBufferedImage(image));
                   break;
+               case "rl_ratios":
+                  @SuppressWarnings("unchecked")
+                  Map<Integer, Set<Cluster>> ratios = (Map<Integer, Set<Cluster>>)value;
+                  ratios.keySet().parallelStream()
+                           .forEach((ix) -> {
+                              Set<Cluster> clusters = ratios.get(ix.intValue());
+                              Set<Long> means = clusters.parallelStream()
+                                    .map(Cluster::mean)
+                                    .map(Math::round)
+                                    .collect(Collectors.toSet());
+                              
+                              System.out.println(proxy.getFilename() + "\tLine Number [" + ix + "]: \t" + Joiner.on(", ").join(means));
+                           } );
+                  
+                  break;
                case "seed":
                   image = (BinaryImage)value;
 //                     proxy.write("seed", BinaryImage.toBufferedImage(image));
                   break;
                case "image_mask":
-                  System.out.println(++ctProc + ":\t" + proxy.getFilename());
+//                  System.out.println(++ctProc + ":\t" + proxy.getFilename());
                   image = (BinaryImage)value;
 
                   // find percentage of black pixels
@@ -206,6 +228,7 @@ public class Application implements IApplication
          // NOTE morphological operations are inverted due to foreground color 
          TransformerConfiguration integralImageAdapter = createIntegralImageAdapter(inputKey);
          TransformerConfiguration thresholder = createThresholder(integralImageAdapter);
+         TransformerConfiguration runlength = createRLRatioCalculator(thresholder);
          TransformerConfiguration initialReducer = createReducer(thresholder, 3, 2);               // reduce T=1 (2x)
          TransformerConfiguration t4Reducer = createReducer(initialReducer, 4, 1);                 // reduce T=4 
          TransformerConfiguration t3Reducer = createReducer(t4Reducer, 3, 1);                      // reduce T=3 
@@ -217,6 +240,7 @@ public class Application implements IApplication
          // TODO somewhere in here just output connected components
          
          registerOutput(initialReducer, "initial_reduction");
+         registerOutput(runlength, "rl_ratios");
          registerOutput(expander, "seed");
 //         registerOutput(finalExpander, "image_mask");
          registerOutput(eroder, "image_mask");
@@ -252,6 +276,18 @@ public class Application implements IApplication
          
          editor = builder.createTransformer(sauvolaReg);
          editor.setDataSource(sauvolaReg.getDeclaredInput(FastSauvolaTransformer.INTEGRAL_IMAGE_PIN), integralImageDataSource);
+         TransformerConfiguration thresholder = editor.getConfiguration();
+         return thresholder;
+      }
+      
+      private TransformerConfiguration createRLRatioCalculator(TransformerConfiguration thresholdedImage) throws FactoryUnavailableException, WorkflowConfigurationException, TransformerConfigurationException
+      {
+         TransformerConfigEditor editor;
+         TransformerRegistration rlRatioReg = registry.getRegistration(RunLengthRatioTransformer.EXTENSION_ID);
+         
+         editor = builder.createTransformer(rlRatioReg);
+         editor.setParameter(RunLengthRatioTransformer.PARAM_ITERATIONS, Integer.valueOf(5));
+         editor.setDataSource(rlRatioReg.getDeclaredInput(RunLengthRatioTransformer.BINARY_IMAGE_PIN), thresholdedImage);
          TransformerConfiguration thresholder = editor.getConfiguration();
          return thresholder;
       }
