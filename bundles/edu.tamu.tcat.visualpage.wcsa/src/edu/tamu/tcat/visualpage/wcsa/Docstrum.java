@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
-import java.util.function.DoubleUnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
@@ -37,7 +36,6 @@ import edu.tamu.tcat.dia.segmentation.cc.twopass.CCWriter;
 import edu.tamu.tcat.dia.segmentation.cc.twopass.ConnectedComponentFinder;
 import edu.tamu.tcat.osgi.config.ConfigurationProperties;
 import edu.tamu.tcat.osgi.services.util.ServiceHelper;
-import edu.tamu.tcat.visualpage.wcsa.Docstrum.Polynomial.CriticalPoint.Type;
 import edu.tamu.tcat.visualpage.wcsa.importer.DirectoryImporter;
 import edu.tamu.tcat.visualpage.wcsa.importer.ImageProxy;
 import edu.tamu.tcat.visualpage.wcsa.internal.Activator;
@@ -139,91 +137,6 @@ public class Docstrum
       }
    }
    
-   public static class Polynomial implements DoubleUnaryOperator
-   {
-      private final double[] coeffs;
-      private final int degree;
-      
-      public static class CriticalPoint
-      {
-         public static enum Type
-         {
-            MINIMUM,
-            MAXIMUM,
-            SADDLE
-         }
-         
-         public Type type;
-         
-         /**
-          * x such that f(x) is a critical point 
-          */
-         public double point;
-         
-         public CriticalPoint(Type type, double x)
-         {
-            this.type = type;
-            point = x;
-         }
-      }
-      
-      public Polynomial(double[] coeffs)
-      {
-         this.coeffs = coeffs;
-         this.degree = coeffs.length - 1;
-      }
-      
-      @Override
-      public double applyAsDouble(double operand)
-      {
-         double result = 0;
-         for (int i = 0; i <= degree; i++)
-         {
-            result += coeffs[i] * Math.pow(operand, i);
-         }
-         
-         return result;
-      }
-      
-      public Polynomial differentiate()
-      {
-         if (degree == 0)
-            return new Polynomial(new double[] { 0.0 });
-         
-         double[] vals = new double[coeffs.length - 1];
-         for (int i = 1; i < coeffs.length; i++)
-         {
-            vals[i - 1] = i * coeffs[i];
-         }
-         
-         return new Polynomial(vals);
-      }
-      
-      public List<CriticalPoint> findCriticalPoints(double a, double b, double step)
-      {
-         Polynomial diff = differentiate();
-         List<CriticalPoint> points = new ArrayList<>();
-         double prev = diff.applyAsDouble(a);
-         for (double x = a + step; x < b; x += step)
-         {
-            double y = diff.applyAsDouble(x);
-            if (prev < 0 && y > 0) {
-               // decreasing -> increasing :: minimum
-               points.add(new CriticalPoint(Type.MINIMUM, x));
-            } else if (prev > 0 && y < 0) {
-               // increasing -> decreasing :: maximum
-               points.add(new CriticalPoint(Type.MAXIMUM, x));
-            } else {
-               // TODO: check for saddle points (i.e. derivative is tangent to x-axis)
-            }
-            
-            prev = y;
-         }
-         
-         return points;
-      }
-   }
-
    /**
     * Prints images for display/inspection purposes
     * @param proxy
@@ -485,7 +398,6 @@ public class Docstrum
       {
          g.drawLine((int)cp.point, 0, (int)cp.point, height);
       }
-      
       
       for (int x = 1; x < histogram.length; x++)
       {
