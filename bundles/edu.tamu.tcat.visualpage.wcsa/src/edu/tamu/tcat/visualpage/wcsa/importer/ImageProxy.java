@@ -23,7 +23,9 @@ public class ImageProxy
    {
       try
       {
-         return ImageIO.read(inputFile.toFile());
+         // TODO cache and flush on close
+         BufferedImage image = ImageIO.read(inputFile.toFile());
+         return image;
       }
       catch (IOException e)
       {
