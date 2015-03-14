@@ -3,6 +3,11 @@ package edu.tamu.tcat.visualpage.wcsa;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.DoubleUnaryOperator;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+import org.apache.commons.math3.fitting.PolynomialCurveFitter;
+import org.apache.commons.math3.fitting.WeightedObservedPoint;
 
 import edu.tamu.tcat.visualpage.wcsa.Polynomial.CriticalPoint.Type;
 
@@ -88,5 +93,48 @@ public class Polynomial implements DoubleUnaryOperator
       }
       
       return points;
+   }
+
+   
+   /**
+    * Fits an {@code n} degree polynomial to the supplied values. Uses LMS.
+    * 
+    * @param values The values to be fit. Assumes an integer valued domain over 
+    *       {@code [0, values.length)}.
+    *        
+    * @param n The degree of polynomial to be fit.
+    * @return
+    */
+   public static Polynomial fit(double[] values, int n)
+   {
+      PolynomialCurveFitter fitter = PolynomialCurveFitter.create(5);
+      double[] fit = fitter.fit(IntStream.range(0, values.length)
+                                         .mapToObj(i -> new WeightedObservedPoint(1, i, values[i]))
+                                         .collect(Collectors.toList()));
+      return new Polynomial(fit);
+   }
+   
+   /**
+    * Computes the mean squared error for given polynomial and a set of observed values.
+    * 
+    * @param fn
+    * @param values
+    * @param domain
+    * @return
+    */
+   public static double meanSqError(Polynomial fn, double[] values, double[] domain)
+   {
+      if (values.length != domain.length)
+         throw new IllegalArgumentException("The range and domain arrays must be of equal length.");
+      
+      double error = IntStream.range(0, domain.length).parallel()
+               .mapToDouble(i -> {
+                  double x = domain[i];
+                  double diff = fn.applyAsDouble(x) - values[i];
+                  return diff * diff;
+               })
+               .sum();
+      
+      return error / domain.length;
    }
 }
