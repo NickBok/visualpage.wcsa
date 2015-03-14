@@ -12,6 +12,8 @@ public class Application implements IApplication
 
       try 
       {
+         Docstrum docstrum = new Docstrum();
+         docstrum.execute();
 //         SimpleWCSATest test = new SimpleWCSATest();
 //         test.execute();
          return IApplication.EXIT_OK;
