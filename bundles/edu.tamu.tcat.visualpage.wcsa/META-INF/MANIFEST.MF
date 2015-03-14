@@ -5,11 +5,15 @@ Bundle-SymbolicName: edu.tamu.tcat.visualpage.wcsa;singleton:=true
 Bundle-Version: 1.0.0.qualifier
 Bundle-RequiredExecutionEnvironment: JavaSE-1.8
 Import-Package: com.google.common.base,
+ com.google.common.primitives;version="15.0.0",
  edu.tamu.tcat.analytics.datatrax,
  edu.tamu.tcat.analytics.datatrax.basic,
  edu.tamu.tcat.analytics.datatrax.basic.factorymeta,
  edu.tamu.tcat.analytics.datatrax.config,
+ edu.tamu.tcat.analytics.image.integral,
  edu.tamu.tcat.analytics.image.integral.datatrax,
+ edu.tamu.tcat.analytics.image.region,
+ edu.tamu.tcat.analytics.ml.cluster,
  edu.tamu.tcat.dia.adapters.opencv,
  edu.tamu.tcat.dia.binarization,
  edu.tamu.tcat.dia.binarization.sauvola,
@@ -17,6 +21,7 @@ Import-Package: com.google.common.base,
  edu.tamu.tcat.dia.morphological.opencv,
  edu.tamu.tcat.dia.morphological.opencv.transformer,
  edu.tamu.tcat.dia.morphological.opencv.util,
+ edu.tamu.tcat.dia.segmentation.cc,
  edu.tamu.tcat.dia.segmentation.cc.twopass,
  edu.tamu.tcat.dia.segmentation.images.bloomberg.datatrax,
  edu.tamu.tcat.osgi.config;version="1.0.3",
@@ -27,7 +32,8 @@ Import-Package: com.google.common.base,
 Service-Component: OSGI-INF/factory_registry.xml,OSGI-INF/datatrax.xml,
  OSGI-INF/props.xml
 Bundle-ClassPath: lib/jai_imageio.jar,
- .
+ .,
+ lib/org.apache.commons.math3_3.4.1.jar
 Bundle-ActivationPolicy: lazy
 Bundle-Activator: edu.tamu.tcat.visualpage.wcsa.internal.Activator
 Bundle-Vendor: Texas A&M Engineering Experiment Station
