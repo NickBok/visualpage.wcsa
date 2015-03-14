@@ -18,9 +18,6 @@ import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
 
-import org.apache.commons.math3.fitting.PolynomialCurveFitter;
-import org.apache.commons.math3.fitting.WeightedObservedPoint;
-
 import com.google.common.primitives.Doubles;
 
 import edu.tamu.tcat.analytics.image.integral.IntegralImage;
@@ -36,6 +33,7 @@ import edu.tamu.tcat.dia.segmentation.cc.twopass.CCWriter;
 import edu.tamu.tcat.dia.segmentation.cc.twopass.ConnectedComponentFinder;
 import edu.tamu.tcat.osgi.config.ConfigurationProperties;
 import edu.tamu.tcat.osgi.services.util.ServiceHelper;
+import edu.tamu.tcat.visualpage.wcsa.Polynomial.CriticalPoint;
 import edu.tamu.tcat.visualpage.wcsa.importer.DirectoryImporter;
 import edu.tamu.tcat.visualpage.wcsa.importer.ImageProxy;
 import edu.tamu.tcat.visualpage.wcsa.internal.Activator;
@@ -50,7 +48,7 @@ public class Docstrum
    private static final String OUTPUT_DIR_PARAM = "datatrax.importer.output.dir";
    
    private final FastSauvola binarizer;
-   int minComponentSize = 10; // TODO: allow this to be set by callers
+   int minComponentSize = 128; // TODO: allow this to be set by callers (8x16 px)
 
    public Docstrum()
    {
@@ -67,7 +65,13 @@ public class Docstrum
 
          for (ImageProxy p : images)
          {
+            System.out.println("Analysing Image: " + p.getFilename());
+            long start = System.currentTimeMillis();
             this.performDocstrum(p);
+            long end = System.currentTimeMillis();
+            
+            System.out.println("    ---------------------------");
+            System.out.println("    Elapsed Time: " + (end - start) + " ms\n");
          }
 //         images.parallelStream().forEach(this::performDocstrum);
 //         System.out.println(images);
@@ -83,48 +87,35 @@ public class Docstrum
    private void performDocstrum(ImageProxy proxy)
    {
       // 1. Read, threshold the image, extract connected components
+      long start = System.currentTimeMillis();
       BufferedImage image = proxy.getImage();
+      long end = System.currentTimeMillis();
+      System.out.println("  Image Load: " + (end - start) + " ms");
+      
       try
       {
-         ConnectComponentSet components = findConnectedComponents(image);
+         Set<ConnectedComponent> ccSet = findConnectedComponents(image);
+    
+         if (ccSet.size() < 10)     // if fewer than 10 cc's assume page is blank.
+            return;
          
-         int k = 5;
-         Set<ConnectedComponent> ccSet = components.asSet().stream()
-               .filter(cc -> cc.getBounds().getArea() > minComponentSize)   // TODO use EM to cluster
-               .collect(Collectors.toSet());
-        
-         Set<ComponentNeighbors> adjTable = ccSet.parallelStream()
-               .map((ref) -> new ComponentNeighbors(ref, ccSet, k))
-               .collect(Collectors.toSet());
+         Set<ComponentNeighbors> adjTable = findNeighbors(ccSet, 5);
          
-         // theta is -PI to PI
-         double halfPi = Math.PI / 2;
-         double[] angles = adjTable.parallelStream()
-                              .flatMap(neighbors -> neighbors.neighbors.stream())
-                              .mapToDouble(adj -> (adj.theta > halfPi) ? adj.theta - Math.PI 
-                                                      : (adj.theta < -halfPi) ? adj.theta + Math.PI 
-                                                      : adj.theta)
-                              .toArray();
-         double[] h = computeAngleHistogram(angles, 360);          // HACK: hard coded 180 deg. at .5 degree resolution
-         double[] hPrime = IntStream.range(1, h.length).mapToDouble(i -> h[i] - h[i-1]).toArray();
-         int[] ix = IntStream.range(1, hPrime.length)
-                             .filter(i -> (hPrime[i - 1] * hPrime[i] < 0))
-                             .toArray();
-         // TODO calculate critical points
-         PolynomialCurveFitter fitter = PolynomialCurveFitter.create(5);
-         double[] fit = fitter.fit(IntStream.range(0, h.length)
-                                            .mapToObj(i -> new WeightedObservedPoint(1, i, h[i]))
-                                            .collect(Collectors.toList()));
-         proxy.write("nnAngles", plotHistogram(h, ix, fit));
+         // map theta from -PI to PI to - PI / 2 to PI / 2 
+         computeAngleHistogram(proxy, adjTable);
          
-         double[] distances = adjTable.parallelStream()
-                              .flatMap(neighbors -> neighbors.neighbors.stream())
-                              .mapToDouble(adj -> adj.dist)
-                              .toArray();
          
-         computeDistanceHistogram(distances, 1);
+//         double[] distances = adjTable.parallelStream()
+//                              .flatMap(neighbors -> neighbors.neighbors.stream())
+//                              .mapToDouble(adj -> adj.dist)
+//                              .toArray();
+//         
+//         computeDistanceHistogram(distances, 1);
          
+         start = System.currentTimeMillis();
          renderOutputImages(proxy, image, ccSet, adjTable);
+         end = System.currentTimeMillis();
+         System.out.println("  Write imgs: " + (end - start) + " ms");
       }
       catch (BinarizationException | IOException e)
       {
@@ -136,7 +127,85 @@ public class Docstrum
          image.flush();
       }
    }
+
+
+
+
+   private Set<ConnectedComponent> findConnectedComponents(BufferedImage image) throws BinarizationException
+   {
+      long start = System.currentTimeMillis();
+
+      IntegralImage integralImage = IntegralImageImpl.create(image);
+      BinaryImage binaryImage = binarizer.binarize(integralImage);
+      ConnectedComponentFinder finder = new ConnectedComponentFinder(binaryImage, 100_000);
+      ConnectComponentSet components = finder.call();
+
+      Set<ConnectedComponent> ccSet = components.asSet().stream()
+            .filter(cc -> cc.getBounds().getArea() > minComponentSize)   
+            .collect(Collectors.toSet());
+
+      long end = System.currentTimeMillis();
+      System.out.println("    Find CCs: " + (end - start) + " ms");
+
+      return ccSet;
+   }
+
+
+   /**
+    * Find k nearest neighbors of each cc and compute angle and distance between.
+    * @param ccSet
+    * @param k
+    * @return
+    */
+   private Set<ComponentNeighbors> findNeighbors(Set<ConnectedComponent> ccSet, int k)
+   {
+      long start = System.currentTimeMillis();
+      Set<ComponentNeighbors> adjTable = ccSet.parallelStream()
+            .map((ref) -> new ComponentNeighbors(ref, ccSet, k))
+            .collect(Collectors.toSet());
+      long end = System.currentTimeMillis();
+      System.out.println("   Adj Table: " + (end - start) + " ms");
+      
+      return adjTable;
+   }
    
+   private static class AngleHistogram
+   {
+      double[] histogram;
+      Polynomial fitHistogram;
+      double orientation;
+   }
+   private void computeAngleHistogram(ImageProxy proxy, Set<ComponentNeighbors> adjTable) throws IOException
+   {
+      long start = System.currentTimeMillis();
+
+      double halfPi = Math.PI / 2;
+      double[] angles = adjTable.parallelStream()
+                           .flatMap(neighbors -> neighbors.neighbors.stream())
+                           .mapToDouble(adj -> (adj.theta > halfPi) ? adj.theta - Math.PI 
+                                                   : (adj.theta < -halfPi) ? adj.theta + Math.PI 
+                                                   : adj.theta)
+                           .toArray();
+      double[] h = computeAngleHistogram(angles, 360);          // HACK: hard coded 180 deg. at .5 degree resolution
+      Polynomial bestFit = Polynomial.fit(h, 5);
+      List<CriticalPoint> criticalPoints = bestFit.findCriticalPoints(0, h.length, 1);
+      if (criticalPoints.size() < 3)
+         throw new IllegalStateException();
+      
+      criticalPoints.get(0);
+      CriticalPoint mainRotation = criticalPoints.get(1);
+      criticalPoints.get(2);
+      
+      long end = System.currentTimeMillis();
+      System.out.println("  Angle hist: " + (end - start) + " ms");
+      
+      start = System.currentTimeMillis();
+      proxy.write("nnAngles", plotHistogram(h, bestFit));
+      end = System.currentTimeMillis();
+      System.out.println("   Plot hist: " + (end - start) + " ms");
+   }
+
+
    /**
     * Prints images for display/inspection purposes
     * @param proxy
@@ -163,7 +232,7 @@ public class Docstrum
             (histogramMemo, theta) -> { 
                // NOTE: rotate from [-PI/2, PI/2] to [0, PI] and linear map to [0, nbins)  
                //       mod by nbins to map 0 and PI to the same value (0)
-               int ix = (int)Math.floor((theta + halfPi) /binSize);
+               int ix = (int)Math.floor((theta + halfPi) / binSize);
                if (ix == nbins)
                   ix = 0;
                histogramMemo[ix] = histogramMemo[ix] + 1;
@@ -221,110 +290,7 @@ public class Docstrum
 //      throw new UnsupportedOperationException();
    }
    
-//   private static class Histogram
-//   {
-//      private final double[] values;
-//      private final int min;
-//      private final int max;
-//      private final int binSize;
-//      private final double[] histogram;
-//      
-//      public Histogram(Set<ConnectedComponent> ccSet, int numBins)
-//      {
-//         values = ccSet.parallelStream()
-//                                .mapToDouble(cc -> Math.sqrt(cc.getBounds().getArea()))
-//                                .toArray();
-//         
-//         DoubleSummaryStatistics stats = DoubleStream.of(values)
-//               .collect(DoubleSummaryStatistics::new,
-//                   DoubleSummaryStatistics::accept,
-//                   DoubleSummaryStatistics::combine);
-//         
-//         max = (int)Math.ceil(stats.getMax());
-//         min = (int)Math.floor(stats.getMin());
-//         
-//         binSize = (int)Math.ceil((double)(max - min) / numBins);
-//         int [] histCt = new int [numBins];
-//         DoubleStream.of(values).forEach(sqrtArea ->
-//         {
-//            int bin = (int)((sqrtArea - min) / binSize);
-//            histCt[bin]++;
-//         });
-//         
-//         
-//         double sz = ccSet.size();
-//         histogram = IntStream.of(histCt).mapToDouble(raw -> raw / sz).toArray();
-//      }
-//      
-//      private int[] findBreaks()
-//      {
-//         List<Integer> breaks = new ArrayList<>();
-//         for (int bin = 1; bin < (histogram.length - 1); bin++)
-//         {
-//            
-//            double prev = histogram[bin - 1];
-//            double next = histogram[bin + 1];
-//            double curr = histogram[bin];
-//            if (curr <= prev && curr < next)
-//            {
-//               breaks.add(Integer.valueOf(bin));
-//            }
-//         }
-//         return breaks.stream().mapToInt(Integer::intValue).toArray();
-//      }
-//      
-//      /**
-//       * 
-//       * @param ccSet
-//       * @param startBin The first bin (inclusive) to be include in the returned set.
-//       * @param endBin The last bin (exclusive) to be included in the returned set.
-//       */
-//      Set<ConnectedComponent> subSet(Set<ConnectedComponent> ccSet, int startBin, int endBin)
-//      {
-//         double minSize = startBin * binSize + min;
-//         double maxSize = endBin * binSize + min;
-//         return ccSet.parallelStream()
-//               .filter(cc -> {
-//                  double sz = Math.sqrt(cc.getBounds().getArea());
-//                  return (sz >= minSize) && (sz < maxSize);
-//               })
-//               .collect(Collectors.toSet());
-//      }
-//      
-//      private BufferedImage plot()
-//      {
-//         int width = 400;
-//         int height = 400;
-//         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
-//         WritableRaster raster = image.getRaster();      // TODO use a Graphics2D?
-//         initializeBackground(raster);
-//
-//         Graphics2D g = image.createGraphics();
-//         g.setColor(Color.black);
-//         int barWidth = width / histogram.length;
-//         int x = 0;
-//         for (double d : histogram)
-//         {
-//            int barHeight = (int)(d * height);
-//            g.fillRect(x, height - barHeight, barWidth, barHeight);
-//            x += barWidth;
-//         }
-//         
-//         image.flush();
-//         return image;
-//      }
-//         
-//   }
 
-   private ConnectComponentSet findConnectedComponents(BufferedImage image) throws BinarizationException
-   {
-      IntegralImage integralImage = IntegralImageImpl.create(image);
-      BinaryImage binaryImage = binarizer.binarize(integralImage);
-      ConnectedComponentFinder finder = new ConnectedComponentFinder(binaryImage, 100_000);
-      ConnectComponentSet components = finder.call();
-      return components;
-   }
-   
    /**
     * Writes bounding boxes for connected components and lines connecting them on the supplied image.
     * 
@@ -355,35 +321,9 @@ public class Docstrum
    }
 
    
-   
-   
-//         double value = histogram[bin];
-//         double diff = value - histogram[bin - 1];
-//         if (diff > 0 && prev < 0)
-//         {
-////            System.out.println("Valley: " + (bin - 1));
-//            if (firstBreak == 0)
-//               firstBreak = bin;
-//            else if (secondBreak == 0)
-//               secondBreak = bin;
-////            else 
-////               System.out.println("Found third break.");
-//         }
-//         
-//         if (diff < 0 && prev > 0) 
-//         {
-////            System.out.println("Peak: " + (bin - 1));
-//         }
-//         
-//         prev = diff;
-//      }
-//   }
-   
-   
 
-   private BufferedImage plotHistogram(double[] histogram, int[] critPoints, double[] fit)
+   private BufferedImage plotHistogram(double[] histogram, Polynomial eq)
    {
-      Polynomial eq = new Polynomial(fit);
       int width = 400;
       int height = 400;
       BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
@@ -409,25 +349,6 @@ public class Docstrum
          g.fillRect(x, height - barHeight, barWidth, barHeight);
       }
       
-      
-      
-      
-//      for (double d : histogram)
-//      {
-//         
-//         double y = eq.applyAsDouble((double)x);
-//         int a = (int)(y * height * 20);
-//         int barHeight = Math.min(a, height);      // HACK: scale by 20 for better display
-//         
-//         g.fillRect(x, height - barHeight, barWidth, barHeight);
-//         
-//         x += barWidth;
-//      }
-      
-//      for (int i : critPoints)
-//      {
-//         g.drawLine(i, 0, i, height);
-//      }
       
       image.flush();
       return image;
@@ -550,14 +471,6 @@ public class Docstrum
       }
    }
 
-//   private Set<ComponentNeighbors> findNN(Set<ConnectedComponent> components, int k) 
-//   {
-//      // TODO provide more performant impl.
-//      return components.parallelStream()
-//            .map((ref) -> new ComponentNeighbors(ref, components, k))
-//            .collect(Collectors.toSet());
-//   }
-   
    private Set<ImageProxy> loadImages(ConfigurationProperties properties)
    {
       DirectoryImporter importer = getImporter(properties);
