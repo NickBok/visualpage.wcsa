@@ -8,6 +8,7 @@ import java.awt.image.WritableRaster;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.DoubleSummaryStatistics;
@@ -110,17 +111,18 @@ public class Docstrum
                .flatMap(adj -> adj.neighbors.stream())
                .filter(angleHistogram::isWithinLine)
                .collect(Collectors.toSet());
-         double withinLineSpacing = estimateSpacing(withinLine, 2, 2);
          
          Set<AdjacentCC> betweenLine = adjTable.stream()
                .flatMap(adj -> adj.neighbors.stream())
                .filter(angleHistogram::isBetweenLine)
                .collect(Collectors.toSet());
+         
+         double withinLineSpacing = estimateSpacing(withinLine, 2, 2);
          double betweenLineSpacing = estimateSpacing(betweenLine, 2, 2);
          System.out.println("   Within Line Spacing: " + withinLineSpacing);
          System.out.println("  Between Line Spacing: " + betweenLineSpacing);
 
-         // TODO identify lines 
+         // identify lines 
          Collection<Line> lines = findLines(adjTable, angleHistogram, 25000);
          
          start = System.currentTimeMillis();
@@ -168,31 +170,68 @@ public class Docstrum
          }
       }
       
-      int lineId = 0;
-      Map<Integer, Line> lines = new HashMap<>();     // map of set id to line
+      LineCollectionBuilder lbuilder = new LineCollectionBuilder();
       for (int ccSeq = 0; ccSeq < labels.length; ccSeq++)
       {
-         int setId = labels[ccSeq];
-         if (setId < 0)
-            continue;      // shouldn't happen?
+         int ccLabel = labels[ccSeq];
+         if (ccLabel < 0)
+            continue;      
          
-         setId = uf.find(setId);    // get the canonical id for this set
-         Line line = lines.get(Integer.valueOf(setId));
-         if (line == null)
-         {
-            line = new Line();
-            line.setId = setId;
-            line.sequence = lineId++;
-            lines.put(Integer.valueOf(setId), line);
-         }
-         
-         line.components.add(components[ccSeq]);
+         lbuilder.add(components[ccSeq], uf.find(ccLabel));
       }
       
-      lines.values().stream().forEach(Line::init);
-      return lines.values();
+      return lbuilder.build();
    }
 
+   
+   private static class LineCollectionBuilder 
+   {
+      private volatile int lineId = 0;
+      Map<Integer, LineBuilder> lines = new HashMap<>();     // map of set id to line
+      
+      public LineBuilder create(int setId)
+      {
+         LineBuilder line = new LineBuilder();
+         line.sequence = lineId++;
+         lines.put(Integer.valueOf(setId), line);
+         
+         return line;
+      }
+      
+      public void add(ConnectedComponent cc, int setId)
+      {
+         LineBuilder line = lines.get(Integer.valueOf(setId));
+         if (line == null)
+            line = create(setId);
+         
+         line.add(cc);
+      }
+      
+      public List<Line> build()
+      {
+         return lines.values().stream()
+               .map(LineBuilder::build)
+               .collect(Collectors.toList());
+      }
+      
+      private static class LineBuilder 
+      {
+         int sequence;
+         List<ConnectedComponent> components = new ArrayList<>();
+         
+         void add(ConnectedComponent cc)
+         {
+            components.add(cc);
+         }
+         
+         public Line build()
+         {
+            return new Line(components, sequence);
+         }
+      }
+   }
+   
+   
    private int getSetId(ConnectedComponent cc, UnionFind uf, int[] labels)
    {
       int srcIx = cc.getSequence();
@@ -291,11 +330,8 @@ public class Docstrum
       return image;
    }
 
-
    private Set<ConnectedComponent> findConnectedComponents(BufferedImage image) throws BinarizationException
    {
-      long start = System.currentTimeMillis();
-
       IntegralImage integralImage = IntegralImageImpl.create(image);
       BinaryImage binaryImage = binarizer.binarize(integralImage);
       ConnectedComponentFinder finder = new ConnectedComponentFinder(binaryImage, 100_000);
@@ -304,9 +340,6 @@ public class Docstrum
       Set<ConnectedComponent> ccSet = components.asSet().stream()
             .filter(cc -> cc.getBounds().getArea() > minComponentSize)   
             .collect(Collectors.toSet());
-
-      long end = System.currentTimeMillis();
-      System.out.println("    Find CCs: " + (end - start) + " ms");
 
       return ccSet;
    }
@@ -406,7 +439,7 @@ public class Docstrum
     * @param hist 
     * @throws IOException
     */
-   private BufferedImage renderLines(BufferedImage renderCCs, Collection<Line> lines) throws IOException
+   private static BufferedImage renderLines(BufferedImage renderCCs, Collection<Line> lines) throws IOException
    {
       Graphics g = renderCCs.getGraphics();
       g.setColor(Color.black);
@@ -429,7 +462,7 @@ public class Docstrum
     * @param hist 
     * @throws IOException
     */
-   private BufferedImage renderAdjacencyTable(BufferedImage renderCCs, Set<ComponentNeighbors> adjTable, AngleHistogram hist) throws IOException
+   private static BufferedImage renderAdjacencyTable(BufferedImage renderCCs, Set<ComponentNeighbors> adjTable, AngleHistogram hist) throws IOException
    {
       Graphics g = renderCCs.getGraphics();
       g.setColor(Color.black);
@@ -458,7 +491,7 @@ public class Docstrum
 
    
 
-   private BufferedImage plotHistogram(double[] histogram, Polynomial eq)
+   private static BufferedImage plotHistogram(double[] histogram, Polynomial eq)
    {
       int width = 400;
       int height = 400;
@@ -490,7 +523,7 @@ public class Docstrum
       return image;
    }
 
-   private BufferedImage plot(Set<ComponentNeighbors> adjTable)
+   private static BufferedImage plot(Set<ComponentNeighbors> adjTable)
    {
       List<ComponentNeighbors.AdjacentCC> pairs = adjTable.parallelStream()
             .flatMap(neighbors -> neighbors.neighbors.stream())
