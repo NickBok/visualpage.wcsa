@@ -364,43 +364,6 @@ public class Docstrum
    }
    
    /**
-    * Normalizes the histogram to be in the range {@code [0..1]} and applies a rectangular 
-    * smoothing window of size {@code alpha * histogram.length}. 
-    * 
-    * @param histogram The raw counts to be smoothed and normalized.
-    * @param alpha The window size as a percentage of the histogram length.
-    * @param numElements The number of elements in the input collection. Equivalent to sum(histogram)
-    * @return The smoothed, normalized histogram.
-    */
-   private static double[] smoothAndNormalize(int[] histogram, int windowSize, int numElements)
-   {
-      int nbins = histogram.length;
-//      int paddingSize = (int)Math.floor(alpha * nbins / 2);
-//      int windowSize = 2 * paddingSize;
-      int paddingSize = (int)Math.floor((double)windowSize / 2);  // if odd, we ignore the position at the middle
-      
-      // compute integral of the histogram with padding before and after to allow the 
-      // histogram to wrap around the end
-      int[] iHistogram = new int[nbins + windowSize];
-      iHistogram[0] = histogram[nbins - paddingSize];
-      for (int i = 1; i < iHistogram.length; i++)
-      {
-         int index = (nbins - paddingSize + i) % nbins; 
-         iHistogram[i] = iHistogram[i - 1] + histogram[index];
-      }
-      
-      // divide by window size for smoothing
-      // divide by nbins to normalize histogram in range 0..1 
-      double denominator = numElements * windowSize;  
-      return IntStream.range(0,  nbins)
-            .parallel()
-            .mapToDouble(i -> (iHistogram[i + windowSize] - iHistogram[i]) / denominator)
-            .toArray();
-   }
-   
- 
-
-   /**
     * Prints images for display/inspection purposes
     * @param proxy
     * @param image
@@ -422,14 +385,6 @@ public class Docstrum
       proxy.write("lines", renderCCs);
    }
 
-   
-   
-   private double[] computeDistanceHistogram(double[] distances, int pixelsPerBin)
-   {
-      return new double[0];
-//      throw new UnsupportedOperationException();
-   }
-   
    /**
     * Writes bounding boxes for connected components and lines connecting them on the supplied image.
     * 
@@ -462,7 +417,7 @@ public class Docstrum
     * @param hist 
     * @throws IOException
     */
-   private static BufferedImage renderAdjacencyTable(BufferedImage renderCCs, Set<ComponentNeighbors> adjTable, AngleHistogram hist) throws IOException
+   private static BufferedImage renderAdjacencyTable(BufferedImage renderCCs, Set<ComponentNeighbors> adjTable) throws IOException
    {
       Graphics g = renderCCs.getGraphics();
       g.setColor(Color.black);
@@ -472,24 +427,16 @@ public class Docstrum
          BoundingBox box = adj.cc.getBounds();
          Point c1 = adj.cc.getCentroid();
          g.drawRect(box.getLeft(), box.getTop(), box.getWidth(), box.getHeight());
-         
-         if (hist.valid)
-         {
+
          adj.neighbors.stream()
-            .forEach(adjCC -> {
-               if (hist.isBetweenLine(adjCC))
-               {
-                  Point c2 = adjCC.cc.getCentroid();
-                  g.drawLine(c1.getX(), c1.getY(), c2.getX(), c2.getY());
-               }
-            });
-         }
+         .forEach(adjCC -> {
+            Point c2 = adjCC.cc.getCentroid();
+            g.drawLine(c1.getX(), c1.getY(), c2.getX(), c2.getY());
+         });
       });
       g.dispose();
       return renderCCs;
    }
-
-   
 
    private static BufferedImage plotHistogram(double[] histogram, Polynomial eq)
    {
