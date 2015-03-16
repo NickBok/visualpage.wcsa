@@ -1,4 +1,4 @@
-package edu.tamu.tcat.visualpage.wcsa;
+package edu.tamu.tcat.visualpage.wcsa.docstrum;
 
 import java.awt.Color;
 import java.awt.Graphics;
@@ -9,16 +9,28 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.DoubleSummaryStatistics;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.function.BiConsumer;
+import java.util.function.BinaryOperator;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
+
+import org.apache.commons.math3.fitting.PolynomialCurveFitter;
+import org.apache.commons.math3.fitting.WeightedObservedPoint;
 
 import com.google.common.primitives.Doubles;
 
@@ -26,6 +38,7 @@ import edu.tamu.tcat.analytics.image.integral.IntegralImage;
 import edu.tamu.tcat.analytics.image.integral.IntegralImageImpl;
 import edu.tamu.tcat.analytics.image.region.BoundingBox;
 import edu.tamu.tcat.analytics.image.region.Point;
+import edu.tamu.tcat.analytics.image.region.SimpleBoundingBox;
 import edu.tamu.tcat.dia.binarization.BinarizationException;
 import edu.tamu.tcat.dia.binarization.BinaryImage;
 import edu.tamu.tcat.dia.binarization.sauvola.FastSauvola;
@@ -33,10 +46,12 @@ import edu.tamu.tcat.dia.segmentation.cc.ConnectComponentSet;
 import edu.tamu.tcat.dia.segmentation.cc.ConnectedComponent;
 import edu.tamu.tcat.dia.segmentation.cc.twopass.CCWriter;
 import edu.tamu.tcat.dia.segmentation.cc.twopass.ConnectedComponentFinder;
+import edu.tamu.tcat.dia.segmentation.cc.twopass.UnionFind;
 import edu.tamu.tcat.osgi.config.ConfigurationProperties;
 import edu.tamu.tcat.osgi.services.util.ServiceHelper;
-import edu.tamu.tcat.visualpage.wcsa.Docstrum.ComponentNeighbors.AdjacentCC;
+import edu.tamu.tcat.visualpage.wcsa.Polynomial;
 import edu.tamu.tcat.visualpage.wcsa.Polynomial.CriticalPoint;
+import edu.tamu.tcat.visualpage.wcsa.docstrum.Docstrum.ComponentNeighbors.AdjacentCC;
 import edu.tamu.tcat.visualpage.wcsa.importer.DirectoryImporter;
 import edu.tamu.tcat.visualpage.wcsa.importer.ImageProxy;
 import edu.tamu.tcat.visualpage.wcsa.internal.Activator;
@@ -105,6 +120,8 @@ public class Docstrum
          Set<ComponentNeighbors> adjTable = findNeighbors(ccSet, 5);
          
          AngleHistogram angleHistogram = AngleHistogram.create(adjTable);
+         
+         // estimate spacing using angle histogram
          Set<AdjacentCC> withinLine = adjTable.stream()
                .flatMap(adj -> adj.neighbors.stream())
                .filter(angleHistogram::isWithinLine)
@@ -116,12 +133,15 @@ public class Docstrum
                .filter(angleHistogram::isBetweenLine)
                .collect(Collectors.toSet());
          double betweenLineSpacing = estimateSpacing(betweenLine, 2, 2);
-
          System.out.println("   Within Line Spacing: " + withinLineSpacing);
          System.out.println("  Between Line Spacing: " + betweenLineSpacing);
+
+         // TODO identify lines 
+         Collection<Line> lines = findLines(adjTable, angleHistogram, 25000);
+         
          start = System.currentTimeMillis();
          proxy.write("angles", angleHistogram.plot());
-         renderOutputImages(proxy, image, ccSet, adjTable, angleHistogram);
+         renderOutputImages(proxy, image, ccSet, adjTable, angleHistogram, lines);
          end = System.currentTimeMillis();
          System.out.println("  Write imgs: " + (end - start) + " ms");
       }
@@ -134,6 +154,131 @@ public class Docstrum
       {
          image.flush();
       }
+   }
+   
+   /**
+    * 
+    * @param ccPairs Pairs of connected components connected by a link that is 'within line'
+    */
+   public Collection<Line> findLines(Set<ComponentNeighbors> adjTable, AngleHistogram angleHist, int maxSize)
+   {
+      // NOTE this impl is pretty awkward.
+      // indexed by cc seq number, values are the UF set id for the corresponding lines.
+      int[] labels = new int[maxSize];
+      ConnectedComponent[] components = new ConnectedComponent[maxSize];
+      Arrays.fill(labels, -1);
+      UnionFind uf = new UnionFind(maxSize);
+      for (ComponentNeighbors ccNeighbors : adjTable)
+      {
+         ConnectedComponent cc = ccNeighbors.cc;
+         int srcSetId = getSetId(cc, uf, labels);
+         components[cc.getSequence()] = cc;
+         
+         for (AdjacentCC adjCC : ccNeighbors.neighbors)
+         {
+            if (angleHist.isWithinLine(adjCC))
+            {
+               int destSet = getSetId(adjCC.cc, uf, labels);
+               uf.union(srcSetId, destSet);
+            }
+         }
+      }
+      
+      int lineId = 0;
+      Map<Integer, Line> lines = new HashMap<>();     // map of set id to line
+      for (int ccSeq = 0; ccSeq < labels.length; ccSeq++)
+      {
+         int setId = labels[ccSeq];
+         if (setId < 0)
+            continue;      // shouldn't happen?
+         
+         setId = uf.find(setId);    // get the canonical id for this set
+         Line line = lines.get(Integer.valueOf(setId));
+         if (line == null)
+         {
+            line = new Line();
+            line.setId = setId;
+            line.sequence = lineId++;
+            lines.put(Integer.valueOf(setId), line);
+         }
+         
+         line.components.add(components[ccSeq]);
+      }
+      
+      lines.values().stream().forEach(Line::init);
+      return lines.values();
+   }
+
+   private static class Line
+   {
+      // HACK need to provide builder or something similar, or else build set of CC elsewhere and pass in.
+      private int sequence = -1;
+      private int setId = -1;
+      private Set<ConnectedComponent> components = new HashSet<>();
+      
+      private Polynomial fitline;
+      private BoundingBox centroidBounds;
+      private BoundingBox bounds;
+      
+      public void init()
+      {
+         PolynomialCurveFitter fitter = PolynomialCurveFitter.create(1);
+         List<WeightedObservedPoint> points = components.stream().map(cc -> { 
+            Point centroid = cc.getCentroid();
+            return new WeightedObservedPoint(1, centroid.getX(), centroid.getY());
+         })
+         .collect(Collectors.toList());
+         
+         // compute centroid bounding box and line bounding box
+         int[] lineBounds = new int[] {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
+         int[] centroidAcc = new int[] {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
+         for (ConnectedComponent cc : components)
+         {
+            BoundingBox box = cc.getBounds();
+            lineBounds[0] = Math.min(lineBounds[0], box.getLeft());
+            lineBounds[1] = Math.min(lineBounds[1], box.getTop());
+            lineBounds[2] = Math.max(lineBounds[2], box.getRight());
+            lineBounds[3] = Math.max(lineBounds[3], box.getBottom());
+            
+            Point centroid = cc.getCentroid();
+            centroidAcc[0] = Math.min(centroidAcc[0], centroid.getX());
+            centroidAcc[1] = Math.min(centroidAcc[1], centroid.getY());
+            centroidAcc[2] = Math.max(centroidAcc[2], centroid.getX());
+            centroidAcc[3] = Math.max(centroidAcc[3], centroid.getY());
+         }
+         
+         bounds = new SimpleBoundingBox(lineBounds[0], lineBounds[1], lineBounds[2], lineBounds[3]);
+         centroidBounds = new SimpleBoundingBox(centroidAcc[0], centroidAcc[1], centroidAcc[2], centroidAcc[3]);
+         
+         fitline = new Polynomial(fitter.fit(points));
+      }
+      
+      public void drawCenterLine(Graphics g)
+      {
+         int xMin = centroidBounds.getLeft();
+         int yMin = (int)Math.round(fitline.applyAsDouble(xMin));
+         int xMax = centroidBounds.getRight();
+         int yMax = (int)Math.round(fitline.applyAsDouble(xMax));
+         g.drawLine(xMin, yMin, xMax, yMax);
+      }
+      
+      public void drawBox(Graphics g)
+      {
+         int xMin = bounds.getLeft();
+         int yMin = bounds.getTop();
+         int xMax = bounds.getRight();
+         int yMax = bounds.getBottom();
+         g.drawRect(bounds.getLeft(), bounds.getTop(), bounds.getWidth(), bounds.getHeight());
+      }
+   }
+
+   
+   private int getSetId(ConnectedComponent cc, UnionFind uf, int[] labels)
+   {
+      int srcIx = cc.getSequence();
+      if (labels[srcIx] < 0)
+         labels[srcIx] = uf.makeSet();
+      return labels[srcIx];
    }
 
    /**
@@ -397,16 +542,6 @@ public class Docstrum
          double[] h = computeAngleHistogram(angles, 360);          // HACK: hard coded 180 deg. at .5 degree resolution
          
          Polynomial bestFit = Polynomial.fit(h, 5);
-//         List<CriticalPoint> criticalPoints = bestFit.findCriticalPoints(0, h.length, 1);
-//         if (criticalPoints.size() < 3)
-//            throw new IllegalStateException();
-//         
-//         double orientationLowerBound = criticalPoints.get(0).point;
-//         double orientation = criticalPoints.get(1).point;
-//         double orientationUpperBound = criticalPoints.get(2).point;
-//         
-//         CriticalPoint mainRotation = criticalPoints.get(1);
-//         criticalPoints.get(2);
          
          return new AngleHistogram(h, bestFit);
       }
@@ -516,15 +651,19 @@ public class Docstrum
     * @param ccSet
     * @param adjTable
     * @param angleHistogram 
+    * @param lines 
     * @throws IOException
     */
-   private void renderOutputImages(ImageProxy proxy, BufferedImage image, Set<ConnectedComponent> ccSet, Set<ComponentNeighbors> adjTable, AngleHistogram angleHistogram) throws IOException
+   private void renderOutputImages(ImageProxy proxy, BufferedImage image, Set<ConnectedComponent> ccSet, Set<ComponentNeighbors> adjTable, AngleHistogram angleHistogram, Collection<Line> lines) throws IOException
    {
       BufferedImage renderCCs = CCWriter.render(ccSet, image.getWidth(), image.getHeight());
       proxy.write("docstrum", plot(adjTable));
       
-      renderCCs = renderAdjacencyTable(renderCCs, adjTable, angleHistogram);
-      proxy.write("colorized", renderCCs);
+//      renderCCs = renderAdjacencyTable(renderCCs, adjTable, angleHistogram);
+//      proxy.write("colorized", renderCCs);
+      
+      renderCCs = renderLines(renderCCs, lines);
+      proxy.write("lines", renderCCs);
    }
 
    
@@ -535,7 +674,29 @@ public class Docstrum
 //      throw new UnsupportedOperationException();
    }
    
-
+   /**
+    * Writes bounding boxes for connected components and lines connecting them on the supplied image.
+    * 
+    * @param proxy
+    * @param renderCCs
+    * @param adjTable
+    * @param hist 
+    * @throws IOException
+    */
+   private BufferedImage renderLines(BufferedImage renderCCs, Collection<Line> lines) throws IOException
+   {
+      Graphics g = renderCCs.getGraphics();
+      g.setColor(Color.black);
+      
+      lines.stream()
+      .forEach(line -> {
+         line.drawBox(g);
+         line.drawCenterLine(g);
+      });
+      g.dispose();
+      return renderCCs;
+   }
+   
    /**
     * Writes bounding boxes for connected components and lines connecting them on the supplied image.
     * 
