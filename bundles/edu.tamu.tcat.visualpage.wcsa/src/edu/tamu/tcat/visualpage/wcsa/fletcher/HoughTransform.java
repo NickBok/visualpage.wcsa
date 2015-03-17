@@ -1,6 +1,10 @@
 package edu.tamu.tcat.visualpage.wcsa.fletcher;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -40,11 +44,9 @@ public class HoughTransform<T>
          }
       }
 
-      public Object getByAngle(HoughAccumulator<T> acc)
+      public AngleColumn<T> getByAngle(HoughAccumulator<T> acc)
       {
-         throw new UnsupportedOperationException();
-         // TODO return something more semantic
-//         return new ObservationsByAngle(accumulator.column(acc.getAngleIndex()));
+         return new AngleColumn<T>(acc.getAngleIndex(), accumulator);
       }
 
       /**
@@ -95,17 +97,14 @@ public class HoughTransform<T>
                accumulator.put(rhoIx, i, acc);
             }
             
-            acc.observations.add(observation);
+            acc.add(observation);
          });
       }
       
-      public HoughAccumulator<T> getCell(HoughPoint p)
+      private int toAngleIx(double theta)
       {
-         double rho = p.rho;
-         double theta = p.theta;
-         
-         double minDiff = Double.MAX_VALUE;
          int thetaIx = -1;
+         double minDiff = Double.MAX_VALUE;
          for (int i = 0; i < angles.length; i++)
          {
             double diff = Math.abs(theta - angles[i]);
@@ -116,7 +115,15 @@ public class HoughTransform<T>
             }
          }
          
-         int rhoIx = Integer.valueOf((int)Math.floor(rho / radialResolution));
+         return thetaIx;
+      }
+      
+      public HoughAccumulator<T> getCell(HoughPoint p)
+      {
+         int thetaIx = toAngleIx(p.theta);
+         int rhoIx = Integer.valueOf((int)Math.floor(p.rho / radialResolution));
+         
+         // TODO check existence 
          return accumulator.get(Integer.valueOf(rhoIx), Integer.valueOf(thetaIx));
       }
       
@@ -132,4 +139,47 @@ public class HoughTransform<T>
 //         rhoValues = new TreeSet<>(accumulator.rowKeySet());
 //         thetaValues = new TreeSet<>(accumulator.columnKeySet());
 //      }
+      
+      /**
+       * Represents a column of the two dimensional hough space. The values in this column 
+       */
+      public static class AngleColumn<T>
+      {
+         private double angle;
+         private int angleIx;
+         
+         private List<Integer> rhoValues;
+         private final Map<Integer, HoughAccumulator<T>> values;
+         private Table<Integer, Integer, HoughAccumulator<T>> accumulator;
+         
+         public AngleColumn(int angleIx, Table<Integer, Integer, HoughAccumulator<T>> accumulator)
+         {
+            this.angle = angleIx;
+            this.accumulator = accumulator;
+            this.values = accumulator.column(angleIx);
+            this.rhoValues = new ArrayList<Integer>();
+            for (Integer i : new TreeSet<>(values.keySet()))
+            {
+               rhoValues.add(i);
+            }
+         }
+         
+         public int size()
+         {
+            return rhoValues.size();
+         }
+         
+         public HoughAccumulator<T> get(int ix)
+         {
+            return values.get(Integer.valueOf(ix));
+         }
+         
+         public int indexOf(HoughAccumulator<T> acc)
+         {
+            if (acc.getAngleIndex() != angleIx)
+               throw new IllegalArgumentException("Invalid accumulator. Expected angle of [" + angleIx + "]");
+            
+            return rhoValues.indexOf(Integer.valueOf(acc.getRhoIndex()));
+         }
+      }
    }
