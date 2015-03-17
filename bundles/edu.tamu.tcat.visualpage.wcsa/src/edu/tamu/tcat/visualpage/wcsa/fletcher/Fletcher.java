@@ -3,13 +3,15 @@ package edu.tamu.tcat.visualpage.wcsa.fletcher;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.DoubleSummaryStatistics;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.function.DoubleUnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+
+import com.google.common.primitives.Doubles;
 
 import edu.tamu.tcat.analytics.image.integral.IntegralImage;
 import edu.tamu.tcat.analytics.image.integral.IntegralImageImpl;
@@ -21,6 +23,7 @@ import edu.tamu.tcat.dia.binarization.sauvola.FastSauvola;
 import edu.tamu.tcat.dia.segmentation.cc.ConnectComponentSet;
 import edu.tamu.tcat.dia.segmentation.cc.ConnectedComponent;
 import edu.tamu.tcat.dia.segmentation.cc.twopass.ConnectedComponentFinder;
+import edu.tamu.tcat.visualpage.wcsa.fletcher.HoughTransform.AngleColumn;
 
 /**
  * 
@@ -75,7 +78,7 @@ public class Fletcher
       
       candidates.stream().forEach(accumulator::addObservation);
       
-      performStuff(accumulator, 20);      // loop 20 to 1
+      performStuff(accumulator, 20, radialResolution);      // loop 20 to 1
       
       // 2.  set the Hough domain resolution R to 0.2 X Hws, set a counter to zero
       // 3.  Apply Hough transform to all components in the working set for theta in the 
@@ -103,7 +106,7 @@ public class Fletcher
     * @param transform
     * @param thres
     */
-   private void performStuff(HoughTransform<ConnectedComponent> transform, int thres)
+   private void performStuff(HoughTransform<ConnectedComponent> transform, int thres, double R)
    {
       Collection<HoughAccumulator<ConnectedComponent>> accumulators = transform.getAccumulators();
       
@@ -115,7 +118,22 @@ public class Fletcher
          //     4a. Form a cluster of the 11 rho cells (constant theta) including the primary cell
          //         clustered around primary cell
          //     4b. Compute the average height of components in the cluser (Ha)
-         transform.getByAngle(primayCell);
+         AngleColumn<ConnectedComponent> column = transform.getByAngle(primayCell);
+         
+         // build cluster of 11 closest cells.
+         int ix = column.indexOf(primayCell);
+         List<ConnectedComponent> components = getWindowedRange(column, ix, 5);
+         double avgHeight = components.stream()
+               .mapToDouble(cc -> cc.getBounds().getHeight()).sum() / components.size(); 
+         int fcluster = (int)Math.ceil(avgHeight / R);
+         
+         components = getWindowedRange(column, ix, fcluster);
+         double theta = transform.getReferencePoint(primayCell).theta;
+         components = components.stream()
+                                .sorted(new HoughLineComparator(theta))
+                                .collect(Collectors.toList());
+         performStringSegmentation(components);
+         
          
       }
       // For each cell having a count greater than RT
@@ -132,6 +150,81 @@ public class Fletcher
       
    }
 
+   /**
+    * Returns the connected components for all cells within a specified range of a primary cell 
+    * @param column
+    * @param cellIx The cell at the center of the cluster.
+    * @param size The numger of cells on either side to be returned.
+    * @return
+    */
+   private List<ConnectedComponent> getWindowedRange(AngleColumn<ConnectedComponent> column, int cellIx, int size)
+   {
+      int min;
+      int max;
+      min = Math.min(cellIx - size, 0);
+      max = Math.max(cellIx + size, column.size() - 1);
+      List<ConnectedComponent> cluster = IntStream.range(min, max)
+            .mapToObj(i -> column.get(i))
+            .flatMap(acc -> acc.getObservations().stream())
+            .collect(Collectors.toList());
+      
+      return cluster;
+   }
+
+   private void performStringSegmentation(List<ConnectedComponent> components)
+   {
+      // note we reference i+1, may need to guard 
+      for (int i = 0; i < components.size(); i++)
+      {
+         
+      }
+      
+   }
+
+   public static class HoughLineComparator implements Comparator<ConnectedComponent>
+   {
+      
+      private double theta;
+      private double xterm;
+      private double yterm;
+
+      public HoughLineComparator(double theta)
+      {
+         this.theta = theta;
+         this.xterm = Math.sin(theta);
+         this.yterm = Math.cos(theta);
+         // TODO Auto-generated constructor stub
+      }
+
+      @Override
+      public int compare(ConnectedComponent cc1, ConnectedComponent cc2)
+      {
+         Point a = cc1.getCentroid();
+         Point b = cc2.getCentroid();
+         double projectionA = a.getX() * xterm + a.getY() * yterm;
+         double projectionB = b.getX() * xterm + b.getY() * yterm;
+         
+         return Doubles.compare(projectionA, projectionB);
+      }
+   }
+   
+   public static class Group
+   {
+      enum Type { isolated, phrase, word }
+      
+      Type type;
+      int head;
+      int tail;
+      int num;
+   }
+   
+   public static class Phrase
+   {
+      int head;
+      int tail;
+      int num;
+   }
+   
    private double[] computeMainAngles()
    {
       List<Double> angles = new ArrayList<>();
