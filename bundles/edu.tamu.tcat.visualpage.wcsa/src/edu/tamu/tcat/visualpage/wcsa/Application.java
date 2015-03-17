@@ -3,6 +3,8 @@ package edu.tamu.tcat.visualpage.wcsa;
 import org.eclipse.equinox.app.IApplication;
 import org.eclipse.equinox.app.IApplicationContext;
 
+import edu.tamu.tcat.visualpage.wcsa.docstrum.Docstrum;
+
 public class Application implements IApplication
 {
 

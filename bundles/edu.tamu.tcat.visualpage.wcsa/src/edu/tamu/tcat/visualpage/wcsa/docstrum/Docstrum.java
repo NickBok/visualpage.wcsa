@@ -37,6 +37,7 @@ import edu.tamu.tcat.osgi.config.ConfigurationProperties;
 import edu.tamu.tcat.osgi.services.util.ServiceHelper;
 import edu.tamu.tcat.visualpage.wcsa.Polynomial;
 import edu.tamu.tcat.visualpage.wcsa.docstrum.ComponentNeighbors.AdjacentCC;
+import edu.tamu.tcat.visualpage.wcsa.fletcher.Fletcher;
 import edu.tamu.tcat.visualpage.wcsa.importer.DirectoryImporter;
 import edu.tamu.tcat.visualpage.wcsa.importer.ImageProxy;
 import edu.tamu.tcat.visualpage.wcsa.internal.Activator;
@@ -89,6 +90,7 @@ public class Docstrum
 
    private void performDocstrum(ImageProxy proxy)
    {
+      Fletcher fletcher = new Fletcher();
       // 1. Read, threshold the image, extract connected components
       long start = System.currentTimeMillis();
       BufferedImage image = proxy.getImage();
@@ -98,38 +100,43 @@ public class Docstrum
       try
       {
          Set<ConnectedComponent> ccSet = findConnectedComponents(image);
-    
-         if (ccSet.size() < 10)     // if fewer than 10 cc's assume page is blank.
-            return;
-         
-         Set<ComponentNeighbors> adjTable = findNeighbors(ccSet, 5);
-         
-         AngleHistogram angleHistogram = AngleHistogram.create(adjTable);
-         
-         // estimate spacing using angle histogram
-         Set<AdjacentCC> withinLine = adjTable.stream()
-               .flatMap(adj -> adj.neighbors.stream())
-               .filter(angleHistogram::isWithinLine)
-               .collect(Collectors.toSet());
-         
-         Set<AdjacentCC> betweenLine = adjTable.stream()
-               .flatMap(adj -> adj.neighbors.stream())
-               .filter(angleHistogram::isBetweenLine)
-               .collect(Collectors.toSet());
-         
-         double withinLineSpacing = estimateSpacing(withinLine, 2, 2);
-         double betweenLineSpacing = estimateSpacing(betweenLine, 2, 2);
-         System.out.println("   Within Line Spacing: " + withinLineSpacing);
-         System.out.println("  Between Line Spacing: " + betweenLineSpacing);
-
-         // identify lines 
-         Collection<Line> lines = findLines(adjTable, angleHistogram, 25000);
-         
-         start = System.currentTimeMillis();
-         proxy.write("angles", angleHistogram.plot());
-         renderOutputImages(proxy, image, ccSet, adjTable, angleHistogram, lines);
-         end = System.currentTimeMillis();
-         System.out.println("  Write imgs: " + (end - start) + " ms");
+         List<ConnectedComponent> textCCs = fletcher.process(ccSet);
+//         if (ccSet.size() < 10)     // if fewer than 10 cc's assume page is blank.
+//            return;
+//         
+//         Set<ComponentNeighbors> adjTable = findNeighbors(ccSet, 5);
+//         
+//         AngleHistogram angleHistogram = AngleHistogram.create(adjTable);
+//         
+//         // estimate spacing using angle histogram
+//         Set<AdjacentCC> withinLine = adjTable.stream()
+//               .flatMap(adj -> adj.neighbors.stream())
+//               .filter(angleHistogram::isWithinLine)
+//               .collect(Collectors.toSet());
+//         
+//         Set<AdjacentCC> betweenLine = adjTable.stream()
+//               .flatMap(adj -> adj.neighbors.stream())
+//               .filter(angleHistogram::isBetweenLine)
+//               .collect(Collectors.toSet());
+//         
+//         double withinLineSpacing = estimateSpacing(withinLine, 2, 2);
+//         double betweenLineSpacing = estimateSpacing(betweenLine, 2, 2);
+//         System.out.println("   Within Line Spacing: " + withinLineSpacing);
+//         System.out.println("  Between Line Spacing: " + betweenLineSpacing);
+//
+//         // identify lines 
+//         Collection<Line> lines = findLines(adjTable, angleHistogram, 25000);
+//         
+//         start = System.currentTimeMillis();
+//         proxy.write("angles", angleHistogram.plot());
+//         renderOutputImages(proxy, image, ccSet, adjTable, angleHistogram, lines);
+         BufferedImage renderCCs = CCWriter.render(ccSet, image.getWidth(), image.getHeight());
+         proxy.write("rawCCs", renderCCs);
+         BufferedImage textCCImgs = CCWriter.render(textCCs, image.getWidth(), image.getHeight());
+         proxy.write("textCCs", textCCImgs);
+//         renderOutputImages(proxy, image, ccSet, adjTable, angleHistogram, lines);
+//         end = System.currentTimeMillis();
+//         System.out.println("  Write imgs: " + (end - start) + " ms");
       }
       catch (BinarizationException | IOException e)
       {
