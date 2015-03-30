@@ -5,36 +5,34 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import javax.imageio.ImageIO;
 
-public class DirectoryImporter implements Iterator<ImageProxy>
+public class DirectoryImporter 
 {
-   private Iterator<Path> imIterator;
    private Path outputPath;
+   private Path inputBase;
+   private Set<Path> imageFiles = new HashSet<>();
 
-   public DirectoryImporter(Path inputPath, Path outputPath)
+   public DirectoryImporter(Path inputBase, Path outputPath)
    {
+      this.inputBase = inputBase;
       this.outputPath = outputPath;
-      
-      Set<Path> imageFiles = ImageFileFilter.load(inputPath);
-      imIterator = imageFiles.iterator();
    }
    
-   @Override
-   public boolean hasNext() 
+   public void addDirectory(Path dir) throws IOException
    {
-      return imIterator.hasNext();
+      Set<Path> imFiles = Files.walk(dir)
+                               .filter(DirectoryImporter::isImageFile)
+                               .collect(Collectors.toSet());
+      imageFiles.addAll(imFiles);
    }
    
-   @Override
-   public ImageProxy next() 
+   public Set<ImageProxy> getProxies()
    {
-      return new ImageProxy(this, imIterator.next());
+      return imageFiles.parallelStream().map(p -> new ImageProxy(this, p)).collect(Collectors.toSet());
    }
    
    public Path getOutputPath(ImageProxy proxy)
@@ -43,39 +41,25 @@ public class DirectoryImporter implements Iterator<ImageProxy>
       if (filename.lastIndexOf('.') > 0)
          filename = filename.substring(0, filename.lastIndexOf('.') + 1);
       
-      Path imageOutputPath = outputPath.resolve(filename);
+      Path relPath = inputBase.relativize(proxy.getPath().getParent());
+      Path imageOutputPath = outputPath.resolve(relPath).resolve(filename);
       return imageOutputPath;
    }
    
-   private static class ImageFileFilter
+   private final static HashSet<String> suffixes = new HashSet<>();
+   static {
+      suffixes.addAll(Arrays.asList(ImageIO.getReaderFileSuffixes()));
+   }
+   
+   private static boolean isImageFile(Path p)
    {
-      private final static HashSet<String> suffixes = new HashSet<>();
-      static {
-         suffixes.addAll(Arrays.asList(ImageIO.getReaderFileSuffixes()));
-      }
+      if (!Files.isReadable(p))
+         return false;
       
-      private static Set<Path> load(Path rootDir)
-      {
-         try (Stream<Path> files = Files.walk(rootDir))
-         {
-            return files.filter(ImageFileFilter::isImageFile)
-                              .collect(Collectors.toSet());
-         }
-         catch (IOException e)
-         {
-            throw new IllegalStateException("Failed to read image files.", e);
-         }
-      }
-      private static boolean isImageFile(Path p)
-      {
-         if (!Files.isReadable(p))
-            return false;
-         
-         String fName = p.getFileName().toString();
-         int ix = fName.lastIndexOf(".");
-         
-         String suffix = (ix > 0) ? fName.substring(ix + 1) : "";
-         return !suffix.isEmpty() && suffixes.contains(suffix);
-      }
+      String fName = p.getFileName().toString();
+      int ix = fName.lastIndexOf(".");
+      
+      String suffix = (ix > 0) ? fName.substring(ix + 1) : "";
+      return !suffix.isEmpty() && suffixes.contains(suffix);
    }
 }
