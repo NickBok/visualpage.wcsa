@@ -5,7 +5,9 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.awt.image.WritableRaster;
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -13,13 +15,16 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.DoubleSummaryStatistics;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
+
+import javax.imageio.ImageIO;
 
 import edu.tamu.tcat.analytics.image.integral.IntegralImage;
 import edu.tamu.tcat.analytics.image.integral.IntegralImageImpl;
@@ -28,6 +33,7 @@ import edu.tamu.tcat.analytics.image.region.Point;
 import edu.tamu.tcat.dia.binarization.BinarizationException;
 import edu.tamu.tcat.dia.binarization.BinaryImage;
 import edu.tamu.tcat.dia.binarization.sauvola.FastSauvola;
+import edu.tamu.tcat.dia.opencv.pageseg.SimpleImageSegmenter;
 import edu.tamu.tcat.dia.segmentation.cc.ConnectComponentSet;
 import edu.tamu.tcat.dia.segmentation.cc.ConnectedComponent;
 import edu.tamu.tcat.dia.segmentation.cc.twopass.CCWriter;
@@ -37,7 +43,7 @@ import edu.tamu.tcat.osgi.config.ConfigurationProperties;
 import edu.tamu.tcat.osgi.services.util.ServiceHelper;
 import edu.tamu.tcat.visualpage.wcsa.Polynomial;
 import edu.tamu.tcat.visualpage.wcsa.docstrum.ComponentNeighbors.AdjacentCC;
-import edu.tamu.tcat.visualpage.wcsa.fletcher.Fletcher;
+import edu.tamu.tcat.visualpage.wcsa.fletcher.FletcherGraphicsSegmentation;
 import edu.tamu.tcat.visualpage.wcsa.importer.DirectoryImporter;
 import edu.tamu.tcat.visualpage.wcsa.importer.ImageProxy;
 import edu.tamu.tcat.visualpage.wcsa.internal.Activator;
@@ -62,35 +68,67 @@ public class Docstrum
    
    public void execute()
    {
+      AtomicInteger processingTime = new AtomicInteger();
+      AtomicInteger ct = new AtomicInteger();
+      long startTime = System.currentTimeMillis();
       try (ServiceHelper helper = new ServiceHelper(Activator.getDefault().getContext()))
       {
          ConfigurationProperties properties = helper.waitForService(ConfigurationProperties.class, 10_000);
-         Set<ImageProxy> images = loadImages(properties);
+         DirectoryImporter importer = getImporter(properties);
+         Set<ImageProxy> images = importer.getProxies().parallelStream()
+                                           .sorted((a, b) -> a.getFilename().compareTo(b.getFilename()))
+                                           .collect(Collectors.toSet());
 
+         String fmt = "jpg";
          for (ImageProxy p : images)
          {
-            System.out.println("Analysing Image: " + p.getFilename());
-            long start = System.currentTimeMillis();
-            this.performDocstrum(p);
-            long end = System.currentTimeMillis();
-            
-            System.out.println("    ---------------------------");
-            System.out.println("    Elapsed Time: " + (end - start) + " ms\n");
-         }
-//         images.parallelStream().forEach(this::performDocstrum);
-//         System.out.println(images);
+            try 
+            {
+               System.out.println("Analysing Image: " + p.getPath());
+               SimpleImageSegmenter segmenter = new SimpleImageSegmenter();
+               BufferedImage image = p.getImage();
+               long start = System.currentTimeMillis();
+               image.getWidth();
+               segmenter.findIllustrations(image);
+               if (segmenter.hasImages())
+               {
+                  Path dir = importer.getOutputPath(p);
+                  if (!Files.exists(dir))
+                     Files.createDirectories(dir);
+                  
+                  Path outfile = dir.getParent().resolve(dir.getFileName().toString() + "." + fmt);
+                  ImageIO.write(image, fmt, outfile.toFile());
+               }
+   
+               long end = System.currentTimeMillis();
+               
+               ct.incrementAndGet();
+               ct.getAndUpdate((i) -> (int)(i + (end - start)));
+               System.out.println("    ---------------------------");
+               System.out.println("    Elapsed Time: " + (end - start) + " ms\n");
+            }
+            catch (IOException ioe)
+            {
+               ioe.printStackTrace();
+            }
+         };
          
       } 
       catch (Exception ex)
       {
          ex.printStackTrace();
       }
+      long endTime = System.currentTimeMillis();
+      
+      System.out.println("    ---------------------------");
+      System.out.println(" Pages Processed: " + ct.get() + " ms\n");
+      System.out.println("    Elapsed Time: " + (endTime - startTime) + " ms\n");
+      System.out.println("    Average Time: " + (processingTime.get() / ct.get()) + " ms\n");
    }
    
 
    private void performDocstrum(ImageProxy proxy)
    {
-      Fletcher fletcher = new Fletcher();
       // 1. Read, threshold the image, extract connected components
       long start = System.currentTimeMillis();
       BufferedImage image = proxy.getImage();
@@ -100,7 +138,10 @@ public class Docstrum
       try
       {
          Set<ConnectedComponent> ccSet = findConnectedComponents(image);
-         List<ConnectedComponent> textCCs = fletcher.process(ccSet);
+         FletcherGraphicsSegmentation fletcher = new FletcherGraphicsSegmentation(proxy, ccSet);
+         Set<ConnectedComponent> textCCs = fletcher.process();
+         Set<ConnectedComponent> imageCCs = new HashSet<>(ccSet);
+         imageCCs.removeAll(textCCs);
 //         if (ccSet.size() < 10)     // if fewer than 10 cc's assume page is blank.
 //            return;
 //         
@@ -131,9 +172,11 @@ public class Docstrum
 //         proxy.write("angles", angleHistogram.plot());
 //         renderOutputImages(proxy, image, ccSet, adjTable, angleHistogram, lines);
          BufferedImage renderCCs = CCWriter.render(ccSet, image.getWidth(), image.getHeight());
-         proxy.write("rawCCs", renderCCs);
+         proxy.write("rawCCs", "png", renderCCs);
          BufferedImage textCCImgs = CCWriter.render(textCCs, image.getWidth(), image.getHeight());
-         proxy.write("textCCs", textCCImgs);
+         proxy.write("textCCs", "png", textCCImgs);
+         BufferedImage imageCCImgs = CCWriter.render(imageCCs, image.getWidth(), image.getHeight());
+         proxy.write("imageCCs", "png", imageCCImgs);
 //         renderOutputImages(proxy, image, ccSet, adjTable, angleHistogram, lines);
 //         end = System.currentTimeMillis();
 //         System.out.println("  Write imgs: " + (end - start) + " ms");
@@ -383,13 +426,13 @@ public class Docstrum
    private void renderOutputImages(ImageProxy proxy, BufferedImage image, Set<ConnectedComponent> ccSet, Set<ComponentNeighbors> adjTable, AngleHistogram angleHistogram, Collection<Line> lines) throws IOException
    {
       BufferedImage renderCCs = CCWriter.render(ccSet, image.getWidth(), image.getHeight());
-      proxy.write("docstrum", plot(adjTable));
+      proxy.write("docstrum", "png", plot(adjTable));
       
 //      renderCCs = renderAdjacencyTable(renderCCs, adjTable, angleHistogram);
 //      proxy.write("colorized", renderCCs);
       
       renderCCs = renderLines(renderCCs, lines);
-      proxy.write("lines", renderCCs);
+      proxy.write("lines", "png", renderCCs);
    }
 
    /**
@@ -530,27 +573,34 @@ public class Docstrum
    private Set<ImageProxy> loadImages(ConfigurationProperties properties)
    {
       DirectoryImporter importer = getImporter(properties);
-      Set<ImageProxy> images = new TreeSet<ImageProxy>((a, b) ->
-      {
-         return a.getFilename().compareTo(b.getFilename());
-      });
-      
-      while (importer.hasNext())
-      {
-         images.add(importer.next());
-      }
-      return images;
+      return importer.getProxies().parallelStream()
+                                  .sorted((a, b) -> a.getFilename().compareTo(b.getFilename()))
+                                  .collect(Collectors.toSet());
    }
    
    private DirectoryImporter getImporter(ConfigurationProperties properties)
    {
       String outputDir = properties.getPropertyValue(OUTPUT_DIR_PARAM, String.class); // "I:\\Projects\\HathiTrust WCSA\\output";
       String baseDir = properties.getPropertyValue(BASE_DIR_PARAM, String.class); //"I:\\Projects\\HathiTrust WCSA\\WCSA initial small dataset";
-      String itemDir = properties.getPropertyValue(ITEM_DIR_PARAM, String.class); //"ark+=13960=t00z72x8w";
+//      String itemDir = properties.getPropertyValue(ITEM_DIR_PARAM, String.class); //"ark+=13960=t00z72x8w";
+      String itemlistFile = properties.getPropertyValue("datatrax.importer.itemlist", String.class); //"ark+=13960=t00z72x8w";
       
-      Path root = Paths.get(baseDir).resolve(itemDir);
-      Path output = Paths.get(outputDir).resolve(itemDir);
+      Path p = Paths.get(itemlistFile);
+      
+      Path root = Paths.get(baseDir);
+      Path output = Paths.get(outputDir);
       DirectoryImporter importer = new DirectoryImporter(root, output);
+      try (BufferedReader reader = Files.newBufferedReader(p))
+      {
+         while (reader.ready())
+         {
+            String line = reader.readLine();  
+            importer.addDirectory(root.resolve(line));
+         }
+      }
+      catch (IOException e) {
+         // TODO: handle exception
+      }
       
       return importer;
    }
