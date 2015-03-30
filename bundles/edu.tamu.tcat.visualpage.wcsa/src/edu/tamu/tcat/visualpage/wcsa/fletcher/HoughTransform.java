@@ -14,6 +14,21 @@ import com.google.common.collect.Table;
 
 import edu.tamu.tcat.analytics.image.region.Point;
 
+
+/**
+ *  Represents a discrete Hough transform. 
+ *  
+ *  <p>
+ *  A Hough transform is used to map points in a Cartesian space into lines  
+ *  
+ *  <p>
+ *  In the discrete form, a Hough transform is 
+ *  represented as a two dimensional data structure over the angles of the 
+ *  
+ *  @see http://en.wikipedia.org/wiki/Hough_transform
+ *
+ * @param <T>
+ */
 public class HoughTransform<T>
    {
       private Table<Integer, Integer, HoughAccumulator<T>> accumulator;
@@ -44,6 +59,26 @@ public class HoughTransform<T>
          }
       }
 
+      /**
+       * 
+       * @param fn A function that converts input values of type {@code T} into {@link Point}s.
+       * @param angles An array of angles Must not be modified by caller after creation.
+       * @param radialResolution
+       */
+      public HoughTransform(Function<T, Point> fn, double[] angles, double radialResolution)
+      {
+         
+         this.fn = fn;
+         this.angles = angles;
+         this.accumulator = HashBasedTable.create();
+         this.radialResolution = radialResolution;
+      }
+
+      public double getRadialResolution()
+      {
+         return radialResolution;
+      }
+
       public AngleColumn<T> getByAngle(HoughAccumulator<T> acc)
       {
          return new AngleColumn<T>(acc.getAngleIndex(), accumulator);
@@ -61,21 +96,28 @@ public class HoughTransform<T>
                      .collect(Collectors.toList());
       }
 
-      /**
-       * 
-       * @param fn
-       * @param angles Must not be modified by caller after creation.
-       * @param radialResolution
-       */
-      public HoughTransform(Function<T, Point> fn, double[] angles, double radialResolution)
+      public void remove(Collection<T> toRemove)
       {
-         
-         this.fn = fn;
-         this.angles = angles;
-         this.accumulator = HashBasedTable.create();
-         this.radialResolution = radialResolution;
+         toRemove.stream().forEach(this::remove);
       }
       
+      public void remove(T observation)
+      {
+         Point p = fn.apply(observation);
+         int x = p.getX();
+         int y = p.getY();
+
+         IntStream.range(0, angles.length).forEach(i -> {
+            double theta = angles[i];
+            double rho = x * Math.cos(theta) + y * Math.sin(theta);
+            Integer rhoIx = Integer.valueOf((int)Math.floor(rho / radialResolution));
+            
+            HoughAccumulator<T> acc = accumulator.get(rhoIx, i);
+            if (acc != null)
+               acc.remove(observation);
+         });
+      }
+
       public void addObservation(T observation)
       {
 //         rhoValues = null;
@@ -154,7 +196,7 @@ public class HoughTransform<T>
          
          public AngleColumn(int angleIx, Table<Integer, Integer, HoughAccumulator<T>> accumulator)
          {
-            this.angle = angleIx;
+            this.angleIx = angleIx;
             this.accumulator = accumulator;
             this.values = accumulator.column(angleIx);
             this.rhoValues = new ArrayList<Integer>();
@@ -171,13 +213,25 @@ public class HoughTransform<T>
          
          public HoughAccumulator<T> get(int ix)
          {
-            return values.get(Integer.valueOf(ix));
+            Integer accIx = rhoValues.get(Integer.valueOf(ix));
+            return values.get(accIx);     // TODO might prevent null?
+         }
+         
+         public List<HoughAccumulator<T>> getRange(int minRhoIx, int maxRhoIx)
+         {
+            return values.keySet().stream()
+               .mapToInt(Integer::intValue)
+               .filter(key -> (key >= minRhoIx && key <= maxRhoIx))
+               .sorted()
+               .mapToObj(key -> values.get(Integer.valueOf(key)))
+               .collect(Collectors.toList());
          }
          
          public int indexOf(HoughAccumulator<T> acc)
          {
-            if (acc.getAngleIndex() != angleIx)
-               throw new IllegalArgumentException("Invalid accumulator. Expected angle of [" + angleIx + "]");
+            int ix = acc.getAngleIndex();
+            if (ix != angleIx)
+               throw new IllegalArgumentException("Invalid accumulator. Expected angle index of [" + angleIx + "] but found [" + ix +"]");
             
             return rhoValues.indexOf(Integer.valueOf(acc.getRhoIndex()));
          }
